@@ -14,6 +14,7 @@ import numpy as np
 from TSPClasses import *
 import heapq as hq
 import itertools
+import copy
 
 
 class TSPSolver:
@@ -77,46 +78,86 @@ class TSPSolver:
 	'''
 
     def greedy(self, time_allowance=60.0):
-        results = {}
-        cities = self._scenario.getCities()
-        ncities = len(cities)
-        count = 0
-        foundTour = False
-        bssf = None
+        # Start Timer
         start_time = time.time()
-        # initialize cities to be not visited
-        for i in range(ncities):
-            for city in cities:
-                city._visited = False
-            route = []
-            curr_city = cities[i]  # start at each city
-            curr_city._visited = True
-            route.append(curr_city)
-            while len(route) < ncities:
-                minCost = math.inf
-                minCity = None
-                for city in cities:
-                    if (not city._visited) and (curr_city.costTo(city) < minCost):
-                        minCity = city
-                        minCost = curr_city.costTo(city)
-                if minCity == None:
-                    return None
-                curr_city = minCity
-                curr_city._visited = True
-                route.append(curr_city)
-            bssf = TSPSolution(route)
-            count += 1
-            if bssf.cost < np.inf:
-                # Found a valid route
-                foundTour = True
-                break
+
+        # Initial Setup
+        cities = self._scenario.getCities()
+        n = len(cities)
+        route = []
+        distances = np.array([[cities[s].costTo(cities[d])
+                               for d in range(n)] for s in range(n)])
+        remaining = [i for i in range(1, n)]
+
+        # Depth-First Search
+        while time.time()-start_time < time_allowance:
+            # Handle start of route
+            if len(route) == 0:
+                # Find closest city
+                min_city = None
+                min_dist = float('inf')
+                for city in remaining:
+                    if distances[0][city] < min_dist:
+                        min_city = city
+                        min_dist = distances[0][city]
+                # If no route from start, there is no route
+                if min_dist == float('inf'):
+                    break
+                # Travel to nearest city
+                else:
+                    route.append(min_city)
+                    remaining.remove(min_city)
+                    # print('Traveling from', cities[0]._name, 'to', cities[min_city]._name)
+            # Handle end of route
+            elif len(remaining) == 0:
+                # Backtrack from dead end
+                if distances[route[-1]][0] == float('inf'):
+                    distances[route[-2]][route[-1]] = float('inf')
+                    remaining.append(route[-1])
+                    route = route[:-1]
+                    # print('Backtracking from', cities[route[-1]]._name, 'to', cities[route[-2]]._name)
+                # We're done, return solution
+                else:
+                    end_time = time.time()
+                    bssf = TSPSolution([cities[0]] + [cities[i]
+                                       for i in route])
+                    results = {}
+                    results['cost'] = bssf.cost
+                    results['time'] = end_time - start_time
+                    results['count'] = None
+                    results['soln'] = bssf
+                    results['max'] = None
+                    results['total'] = None
+                    results['pruned'] = None
+                    return results
+            # Handle intermediate step
+            else:
+                # Find the closest city
+                current = route[-1]
+                min_city = None
+                min_dist = float('inf')
+                for city in remaining:
+                    if distances[current][city] < min_dist:
+                        min_city = city
+                        min_dist = distances[current][city]
+                # Backtrack from dead end
+                if min_dist == float('inf'):
+                    previous = 0 if len(route) == 1 else route[-2]
+                    distances[previous][current] = float('inf')
+                    remaining.append(route[-1])
+                    route = route[:-1]
+                    # print('Backtracking from', cities[current]._name, 'to', cities[previous]._name)
+                # Continue to closest city
+                else:
+                    route.append(min_city)
+                    remaining.remove(min_city)
+                    # print('Traveling from', cities[current]._name, 'to', cities[min_city]._name)
         end_time = time.time()
-        for city in cities:
-            city._visited = False
-        results['cost'] = bssf.cost if foundTour else math.inf
+        results = {}
+        results['cost'] = float('inf')
         results['time'] = end_time - start_time
-        results['count'] = count
-        results['soln'] = bssf
+        results['count'] = None
+        results['soln'] = None
         results['max'] = None
         results['total'] = None
         results['pruned'] = None
@@ -132,6 +173,9 @@ class TSPSolver:
 	'''
 
     def branchAndBound(self, time_allowance=60.0):
+        # Start Timer
+        start_time = time.time()
+
         # Initial Setup
         results = {}
         cities = self._scenario.getCities()
@@ -140,18 +184,11 @@ class TSPSolver:
         total_states = 1
         max_states = 0
         bssf = None
-        bssf_state = None
         states = []
         hq.heapify(states)
 
         # Get an Initial BSSF
-        for i in range(len(cities)):
-            tour = self.defaultRandomTour(60)
-            if bssf is None or tour['cost'] < bssf.cost:
-                bssf = tour['soln']
-
-        # Start Timer
-        start_time = time.time()
+        bssf = self.greedy(time_allowance)['soln']
 
         # Build first state
         start_grid = np.array([[cities[source].costTo(cities[destination]) for destination in range(
@@ -195,7 +232,6 @@ class TSPSolver:
                             if bssf is None or new_state.bound < bssf.cost:
                                 bssf = TSPSolution([cities[i]
                                                     for i in new_state.route])
-                                bssf_state = new_state
                             else:
                                 # Prune it
                                 pruned_states += 1
@@ -219,14 +255,79 @@ class TSPSolver:
     ''' <summary>
 		This is the entry point for the algorithm you'll write for your group project.
 		</summary>
-		<returns>results dictionary for GUI that contains three ints: cost of best solution, 
-		time spent to find best solution, total number of solutions found during search, the 
+		<returns>results dictionary for GUI that contains three ints: cost of best solution,
+		time spent to find best solution, total number of solutions found during search, the
 		best solution found.  You may use the other three field however you like.
-		algorithm</returns> 
+		algorithm</returns>
 	'''
 
     def fancy(self, time_allowance=60.0):
-        pass
+        # Start Timer
+        start_time = time.time()
+
+        # Initial Setup
+        greedy = self.greedy(time_allowance)['soln']
+        route = [city._index for city in greedy.route]
+        cost = greedy.cost
+        time_to_best = 0
+        solutions_to_best = 0
+        print('Greedy solution has cost:', cost)
+        bssfs = 0
+        routes = 0
+        n = len(route)
+        countdown = 1000*n
+        indexes = range(n)
+        cities = self._scenario.getCities()
+        cost_lookup = np.array([[cities[s].costTo(cities[d])
+                               for d in range(n)] for s in range(n)])
+
+        # Local Search
+        while countdown > 0 and time.time() - start_time < time_allowance:
+            countdown -= 1
+            new_cost = cost
+            a, b = random.sample(indexes, 2)
+            # Get city indexes
+            a_city = route[a]
+            b_city = route[b]
+            a_prev = route[a-1]
+            b_prev = route[b-1]
+            a_next = route[0] if a + 1 >= n else route[a+1]
+            b_next = route[0] if b + 1 >= n else route[b+1]
+            # Subtract cost to/from a and b
+            new_cost -= cost_lookup[a_prev][a_city]
+            new_cost -= cost_lookup[b_prev][b_city]
+            new_cost -= cost_lookup[a_city][a_next]
+            new_cost -= cost_lookup[b_city][b_next]
+            # Add cost to/from b and a
+            new_cost += cost_lookup[a_prev][b_city]
+            new_cost += cost_lookup[b_prev][a_city]
+            new_cost += cost_lookup[a_city][b_next]
+            new_cost += cost_lookup[b_city][a_next]
+            # Check the route and make the switch if it's better
+            routes += 1
+            if (new_cost < cost):
+                print('New route reduces cost by', cost-new_cost)
+                route[a], route[b] = route[b], route[a]
+                cost = new_cost
+                countdown = 1000*n
+                time_to_best = time.time() - start_time
+                solutions_to_best = routes
+                bssfs += 1
+
+        # Finish and Return Results
+        print('Time to Best:', time_to_best)
+        print('Solutions to Best:', solutions_to_best)
+
+        end_time = time.time()
+        results = {}
+        results['cost'] = cost
+        results['time'] = end_time - start_time
+        results['count'] = bssfs
+        results['soln'] = TSPSolution([cities[city] for city in route])
+        results['max'] = 1
+        results['total'] = routes
+        results['pruned'] = 0
+        return results
 
 
 class State:

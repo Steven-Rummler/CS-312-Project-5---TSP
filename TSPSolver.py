@@ -24,6 +24,17 @@ class TSPSolver:
     def setupWithScenario(self, scenario):
         self._scenario = scenario
 
+    def makeNullResults(self, time_taken):
+        results = {}
+        results['cost'] = float('inf')
+        results['time'] = time_taken
+        results['count'] = None
+        results['soln'] = None
+        results['max'] = None
+        results['total'] = None
+        results['pruned'] = None
+        return results
+
     ''' <summary>
 		This is the entry point for the default solver
 		which just finds a valid random tour.  Note this could be used to find your
@@ -88,8 +99,9 @@ class TSPSolver:
         distances = np.array([[cities[s].costTo(cities[d])
                                for d in range(n)] for s in range(n)])
         remaining = [i for i in range(1, n)]
+        available = [[True for d in range(n)] for s in range(n)]
 
-        # Depth-First Search
+        # Greedy Depth-First Search
         while time.time()-start_time < time_allowance:
             # Handle start of route
             if len(route) == 0:
@@ -97,33 +109,34 @@ class TSPSolver:
                 min_city = None
                 min_dist = float('inf')
                 for city in remaining:
-                    if distances[0][city] < min_dist:
+                    if distances[0][city] < min_dist and available[0][city]:
                         min_city = city
                         min_dist = distances[0][city]
                 # If no route from start, there is no route
                 if min_dist == float('inf'):
-                    break
+                    return self.makeNullResults(time.time() - start_time)
                 # Travel to nearest city
                 else:
                     route.append(min_city)
                     remaining.remove(min_city)
+                    available[0][min_city] = False
                     # print('Traveling from', cities[0]._name, 'to', cities[min_city]._name)
             # Handle end of route
             elif len(remaining) == 0:
                 # Backtrack from dead end
                 if distances[route[-1]][0] == float('inf'):
-                    distances[route[-2]][route[-1]] = float('inf')
+                    for dest in range(n):
+                        available[route[-1]][dest] = True
                     remaining.append(route[-1])
                     route = route[:-1]
                     # print('Backtracking from', cities[route[-1]]._name, 'to', cities[route[-2]]._name)
                 # We're done, return solution
                 else:
-                    end_time = time.time()
                     bssf = TSPSolution([cities[0]] + [cities[i]
                                        for i in route])
                     results = {}
                     results['cost'] = bssf.cost
-                    results['time'] = end_time - start_time
+                    results['time'] = time.time() - start_time
                     results['count'] = None
                     results['soln'] = bssf
                     results['max'] = None
@@ -137,13 +150,13 @@ class TSPSolver:
                 min_city = None
                 min_dist = float('inf')
                 for city in remaining:
-                    if distances[current][city] < min_dist:
+                    if distances[current][city] < min_dist and available[current][city]:
                         min_city = city
                         min_dist = distances[current][city]
                 # Backtrack from dead end
                 if min_dist == float('inf'):
-                    previous = 0 if len(route) == 1 else route[-2]
-                    distances[previous][current] = float('inf')
+                    for dest in range(n):
+                        available[route[-1]][dest] = True
                     remaining.append(route[-1])
                     route = route[:-1]
                     # print('Backtracking from', cities[current]._name, 'to', cities[previous]._name)
@@ -151,17 +164,9 @@ class TSPSolver:
                 else:
                     route.append(min_city)
                     remaining.remove(min_city)
+                    available[current][min_city] = False
                     # print('Traveling from', cities[current]._name, 'to', cities[min_city]._name)
-        end_time = time.time()
-        results = {}
-        results['cost'] = float('inf')
-        results['time'] = end_time - start_time
-        results['count'] = None
-        results['soln'] = None
-        results['max'] = None
-        results['total'] = None
-        results['pruned'] = None
-        return results
+        return self.makeNullResults(time.time() - start_time)
 
     ''' <summary>
 		This is the entry point for the branch-and-bound algorithm that you will implement
@@ -266,7 +271,10 @@ class TSPSolver:
         start_time = time.time()
 
         # Initial Setup
-        greedy = self.greedy(time_allowance)['soln']
+        greedy_results = self.greedy(time_allowance)
+        if (greedy_results['cost'] == math.inf):
+            return greedy_results
+        greedy = greedy_results['soln']
         route = [city._index for city in greedy.route]
         cost = greedy.cost
         time_to_best = 0

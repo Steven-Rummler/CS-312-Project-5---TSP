@@ -87,8 +87,53 @@ class TSPSolver:
 		solution found, and three null values for fields not used for this
 		algorithm</returns>
 	'''
+    def greedy( self,time_allowance=60.0 ):
+        results = {}
+        cities = self._scenario.getCities()
+        ncities = len(cities)
+        count = 0
+        foundTour = False
+        bssf = None
+        start_time = time.time()
+        #initialize cities to be not visited
+        for i in range(ncities):
+            for city in cities:
+                city._visited = False
+            route = []
+            curr_city = cities[i] #start at each city
+            curr_city._visited = True
+            route.append(curr_city)
+            while len(route) < ncities:
+                minCost = math.inf
+                minCity = None
+                for city in cities:
+                    if (not city._visited) and (curr_city.costTo(city) <= minCost):
+                        minCity = city
+                        minCost = curr_city.costTo(city)
+                if minCity == None:
+                    return None
+                curr_city = minCity
+                curr_city._visited = True
+                route.append(curr_city)
+            bssf = TSPSolution(route)
+            count += 1
+            if bssf.cost < np.inf:
+                # Found a valid route
+                foundTour = True
+                break
+        end_time = time.time()
+        results['cost'] = bssf.cost if foundTour else math.inf
+        results['time'] = end_time - start_time
+        results['count'] = count
+        results['soln'] = bssf
+        results['max'] = None
+        results['total'] = None
+        results['pruned'] = None
+        return results
 
-    def greedy(self, time_allowance=60.0):
+    
+    #dfs used to initialize fancy
+    def dfs(self, time_allowance=60.0):
         # Start Timer
         start_time = time.time()
 
@@ -271,12 +316,14 @@ class TSPSolver:
         start_time = time.time()
 
         # Initial Setup
-        greedy_results = self.greedy(time_allowance)
+        greedy_results = self.dfs(time_allowance)
         if (greedy_results['cost'] == math.inf):
             return greedy_results
         greedy = greedy_results['soln']
-        route = [city._index for city in greedy.route]
+        best_route = [city._index for city in greedy.route]
+        route = best_route.copy()
         cost = greedy.cost
+        best_cost = cost
         time_to_best = 0
         solutions_to_best = 0
         print('Greedy solution has cost:', cost)
@@ -288,10 +335,17 @@ class TSPSolver:
         cities = self._scenario.getCities()
         cost_lookup = np.array([[cities[s].costTo(cities[d])
                                for d in range(n)] for s in range(n)])
+        
+        # Intialize annealing variables
+        ini_temp = greedy.cost
+        cooling_rate = .003
+        curr_temp = ini_temp
+        retry = True
 
         # Local Search
         while countdown > 0 and time.time() - start_time < time_allowance:
             countdown -= 1
+            curr_temp *= 1 - cooling_rate
             new_cost = cost
             a, b = random.sample(indexes, 2)
             # Get city indexes
@@ -317,10 +371,32 @@ class TSPSolver:
                 print('New route reduces cost by', cost-new_cost)
                 route[a], route[b] = route[b], route[a]
                 cost = new_cost
-                countdown = 1000*n
-                time_to_best = time.time() - start_time
-                solutions_to_best = routes
+                if cost < best_cost:
+                    print('New best!')
+                    best_cost = cost
+                    best_route = route.copy()
+                    solutions_to_best = routes
+                    time_to_best = time.time() - start_time
+                    countdown = 1000*n
                 bssfs += 1
+            #simulated annealing logic - chance of still accept worse route
+            #stop checking if temperature gets too low.
+            elif curr_temp > 0.00001:
+                delta = new_cost - cost
+                if delta < math.inf and random.random() < self.p_accept(curr_temp, delta):
+                    print('Worse route accepted')
+                    route[a], route[b] = route[b], route[a]
+                    cost = new_cost
+                    bssfs += 1
+                    countdown = 1000*n
+            
+            #try one more time from the best solution so far
+            if countdown == 0 and retry:
+                print("retry")
+                retry = False
+                route = best_route
+                cost = best_cost
+                countdown = 1000*n
 
         # Finish and Return Results
         print('Time to Best:', time_to_best)
@@ -328,16 +404,24 @@ class TSPSolver:
 
         end_time = time.time()
         results = {}
-        results['cost'] = cost
+        results['cost'] = best_cost
         results['time'] = end_time - start_time
         results['count'] = bssfs
-        results['soln'] = TSPSolution([cities[city] for city in route])
+        results['soln'] = TSPSolution([cities[city] for city in best_route])
         results['max'] = 1
         results['total'] = routes
         results['pruned'] = 0
         return results
 
-
+    #this is the probability of accepting a worse solution
+    def p_accept(self, curr_temp, delta):
+        try:
+            ans = 1 / (1 + math.exp(delta / curr_temp))
+        except OverflowError:
+            ans = 0
+        return ans
+    
+    
 class State:
     def __init__(self, route, grid, bound):
         self.route = route
